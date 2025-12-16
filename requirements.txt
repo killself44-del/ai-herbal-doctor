@@ -1,0 +1,5 @@
+streamlit
+pinecone-client
+python-dotenv
+requests
+google-generativeai
