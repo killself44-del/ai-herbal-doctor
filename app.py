@@ -5,13 +5,21 @@ import json
 from pinecone import Pinecone
 from dotenv import load_dotenv
 
-# 1. Configuration & Setup
+# 1. 로컬 환경(.env)에서 로드 시도
 load_dotenv()
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 
+# 2. 키 가져오기 함수 (클라우드 우선 -> 없으면 로컬 확인)
+def get_secret(key_name):
+    if key_name in st.secrets:
+        return st.secrets[key_name] # Streamlit Cloud 방식
+    return os.getenv(key_name)      # 로컬 방식
+
+GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
+PINECONE_API_KEY = get_secret("PINECONE_API_KEY")
+
+# 3. 키가 둘 다 없으면 에러 표시
 if not GOOGLE_API_KEY or not PINECONE_API_KEY:
-    st.error("API Keys missing in .env file.")
+    st.error("🚨 API 키가 없습니다! Streamlit Cloud의 'Secrets' 설정이나 로컬의 '.env' 파일을 확인해주세요.")
     st.stop()
 
 # Configure Pinecone
@@ -298,3 +306,4 @@ if prompt := st.chat_input("증상을 입력하세요..."):
         
         # Reset capability?
         # st.button("새로운 상담 시작", on_click=lambda: st.session_state.clear())
+
