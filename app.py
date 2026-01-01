@@ -93,7 +93,7 @@ def retrieve_context(query, top_k=3):
     except Exception as e:
         return ""
 
-# --- System Prompts (에러 원인 완벽 제거) ---
+# --- System Prompts (에러 방지를 위해 .replace 방식으로 변경) ---
 
 PROMPT_QUERY_REFINEMENT_DUAL = """
 당신은 '검색 쿼리 최적화 전문가'입니다.
@@ -106,19 +106,19 @@ Pinecone 검색을 위해 **내복약용**과 **외용약용** 두 가지 쿼리
    - 예: "두통 쿨링 국화 박하 찜질 (진정 효과)"
 
 [대화 내용]
-{history}
+__HISTORY__
 
 [결과]
 설명 없이 오직 **두 줄의 문자열만** 출력하세요.
 """
 
-# ✅ [수정 완료] {old_symptom} 같은 없는 변수를 모두 제거했습니다.
+# ✅ [수정] 중괄호 {} 대신 __HISTORY_CONTEXT__ 라는 안전한 표시를 씁니다.
 PROMPT_INTERVIEW = """
 당신은 기억력이 좋고 융통성 있는 'AI 한의사'입니다.
 현재 단계는 **[심층 문진(Deep Interview) 단계]**입니다.
 
 [참고: 환자의 과거 진료 기록]
-{history_context}
+__HISTORY_CONTEXT__
 
 [지침 1: 체질 정보 재사용 (중복 질문 금지)]
 - 과거 기록에 환자의 **체질(예: 소음인, 몸이 참, 열이 많음 등)**에 대한 정보가 있다면, 이번 문진에서는 소화/대변/한열(추위탐) 등의 **체질 확인 질문을 생략**하세요.
@@ -142,9 +142,9 @@ PROMPT_PRESCRIPTION_EXPERT = """
 현재 단계는 진단 및 처방 단계입니다.
 
 [입력 데이터]
-1. 내복약 후보: {context_internal}
-2. 외용약 후보: {context_external}
-3. 환자 주증상: {chief_complaint}
+1. 내복약 후보: __CONTEXT_INTERNAL__
+2. 외용약 후보: __CONTEXT_EXTERNAL__
+3. 환자 주증상: __CHIEF_COMPLAINT__
 
 [지침]
 1. **체질 명시**: 진단 내용에 반드시 환자의 **추정 체질(예: 소음인 경향, 몸이 찬 체질 등)**을 텍스트로 포함하세요. (다음 진료 때 기억하기 위함입니다)
@@ -202,7 +202,6 @@ if "messages" not in st.session_state:
     
     if history:
         last = history[-1]
-        # history_context 문자열 생성 (KeyError 방지를 위해 미리 생성)
         st.session_state.history_context = f"- 최근방문: {last['날짜']}\n- 당시증상: {last['증상']}\n- 당시진단: {last['진단결과']}\n- 당시처방: {last['처방약재']}"
         greeting = f"반갑습니다 {p_id}님. 지난번({last['날짜']})엔 **'{last['증상']}'** 문제로 처방을 받으셨네요. 그간 차도는 좀 있으셨습니까? 오늘 불편하신 곳은 어디인지요?"
     else:
@@ -231,8 +230,8 @@ if prompt := st.chat_input("증상을 입력하세요..."):
     if st.session_state.turn_count < INTERVIEW_TURNS:
         with st.chat_message("assistant"):
             with st.spinner("증상을 살피는 중입니다..."):
-                # ✅ 수정된 부분: 에러 없이 history_context만 전달
-                final_interview_prompt = PROMPT_INTERVIEW.format(history_context=st.session_state.history_context)
+                # ✅ 수정된 부분: .format 대신 .replace 사용 (KeyError 원천 차단)
+                final_interview_prompt = PROMPT_INTERVIEW.replace("__HISTORY_CONTEXT__", st.session_state.history_context)
                 
                 response_text = generate_gemini_response(
                     st.session_state.messages, 
@@ -254,8 +253,8 @@ if prompt := st.chat_input("증상을 입력하세요..."):
                 
                 # 1. 쿼리 최적화 (Dual Query)
                 transcript = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-                # ✅ 수정: history 변수 매칭
-                refine_prompt = PROMPT_QUERY_REFINEMENT_DUAL.format(history=transcript)
+                # ✅ .replace 사용
+                refine_prompt = PROMPT_QUERY_REFINEMENT_DUAL.replace("__HISTORY__", transcript)
                 raw_queries = generate_gemini_response([{"role": "user", "content": refine_prompt}], "")
                 
                 try:
@@ -278,12 +277,10 @@ if prompt := st.chat_input("증상을 입력하세요..."):
                 else:
                     original_symptom = "알 수 없음"
 
-                # ✅ 수정: 변수 매칭
-                final_system_prompt = PROMPT_PRESCRIPTION_EXPERT.format(
-                    context_internal=context_internal, 
-                    context_external=context_external,
-                    chief_complaint=original_symptom
-                )
+                # ✅ .replace 사용 (3번)
+                final_system_prompt = PROMPT_PRESCRIPTION_EXPERT.replace("__CONTEXT_INTERNAL__", context_internal)
+                final_system_prompt = final_system_prompt.replace("__CONTEXT_EXTERNAL__", context_external)
+                final_system_prompt = final_system_prompt.replace("__CHIEF_COMPLAINT__", original_symptom)
                 
                 response_text = generate_gemini_response(
                     st.session_state.messages, 
