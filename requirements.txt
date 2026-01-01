@@ -3,4 +3,6 @@ pinecone
 python-dotenv
 requests
 google-generativeai
+gspread          # <-- 추가 (구글 시트 도구)
+oauth2client     # <-- 추가 (인증 도구)
 
