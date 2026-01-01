@@ -22,7 +22,7 @@ GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
 PINECONE_API_KEY = get_secret("PINECONE_API_KEY")
 
 if not GOOGLE_API_KEY or not PINECONE_API_KEY:
-    st.error("🚨 API 키를 찾을 수 없습니다! Streamlit Cloud의 [Settings] -> [Secrets]에 키가 저장되었는지 확인해주세요.")
+    st.error("🚨 API 키를 찾을 수 없습니다! Secrets 설정을 확인해주세요.")
     st.stop()
 
 # Configure Pinecone
@@ -93,7 +93,7 @@ def retrieve_context(query, top_k=3):
     except Exception as e:
         return ""
 
-# --- System Prompts (에러 방지를 위해 .replace 방식으로 변경) ---
+# --- System Prompts (중괄호 문제 해결을 위해 __KEY__ 방식 사용) ---
 
 PROMPT_QUERY_REFINEMENT_DUAL = """
 당신은 '검색 쿼리 최적화 전문가'입니다.
@@ -112,7 +112,7 @@ __HISTORY__
 설명 없이 오직 **두 줄의 문자열만** 출력하세요.
 """
 
-# ✅ [수정] 중괄호 {} 대신 __HISTORY_CONTEXT__ 라는 안전한 표시를 씁니다.
+# ✅ [수정 확인] 여기를 보세요! { } 중괄호를 없애고 __HISTORY_CONTEXT__ 로 바꿨습니다.
 PROMPT_INTERVIEW = """
 당신은 기억력이 좋고 융통성 있는 'AI 한의사'입니다.
 현재 단계는 **[심층 문진(Deep Interview) 단계]**입니다.
@@ -230,7 +230,7 @@ if prompt := st.chat_input("증상을 입력하세요..."):
     if st.session_state.turn_count < INTERVIEW_TURNS:
         with st.chat_message("assistant"):
             with st.spinner("증상을 살피는 중입니다..."):
-                # ✅ 수정된 부분: .format 대신 .replace 사용 (KeyError 원천 차단)
+                # ✅ [수정 확인] format 대신 .replace를 썼는지 확인하세요!
                 final_interview_prompt = PROMPT_INTERVIEW.replace("__HISTORY_CONTEXT__", st.session_state.history_context)
                 
                 response_text = generate_gemini_response(
@@ -253,7 +253,7 @@ if prompt := st.chat_input("증상을 입력하세요..."):
                 
                 # 1. 쿼리 최적화 (Dual Query)
                 transcript = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-                # ✅ .replace 사용
+                # ✅ .replace 확인
                 refine_prompt = PROMPT_QUERY_REFINEMENT_DUAL.replace("__HISTORY__", transcript)
                 raw_queries = generate_gemini_response([{"role": "user", "content": refine_prompt}], "")
                 
@@ -277,7 +277,7 @@ if prompt := st.chat_input("증상을 입력하세요..."):
                 else:
                     original_symptom = "알 수 없음"
 
-                # ✅ .replace 사용 (3번)
+                # ✅ .replace 확인
                 final_system_prompt = PROMPT_PRESCRIPTION_EXPERT.replace("__CONTEXT_INTERNAL__", context_internal)
                 final_system_prompt = final_system_prompt.replace("__CONTEXT_EXTERNAL__", context_external)
                 final_system_prompt = final_system_prompt.replace("__CHIEF_COMPLAINT__", original_symptom)
