@@ -46,33 +46,49 @@ def get_gemini_embedding(text):
     except:
         return None
 
-def retrieve_context(user_symptom, top_k=5):
+def retrieve_context(query, top_k=30): # ⚡️ 수정 1: 5개 말고 30개나 가져옵니다!
     try:
-        # ⚡️ [수정] AI에게 검색어를 다시 만들라고 시키지 않고, 
-        # 사용자가 말한 증상을 그대로 넣되, '문맥'만 살짝 추가합니다.
-        query_text = f"증상 '{user_symptom}'을 치료하는 약초의 효능과 사용법"
+        # 검색어: 증상 위주로 단순 명료하게
+        enhanced_query = f"증상 '{query}' 치료에 효능이 있는 약초"
         
-        embedding = get_gemini_embedding(query_text)
+        embedding = get_gemini_embedding(enhanced_query)
         if not embedding: return ""
         
-        # 검색 실행
         results = index.query(
             vector=embedding,
-            top_k=top_k,
+            top_k=top_k, 
             include_metadata=True
         )
         
-        # 결과 정리
-        contexts = []
+        valid_contexts = []
+        
+        # ⚡️ 수정 2: 가져온 30개 중에서 '알맹이'만 골라내는 필터링 작업
         for match in results['matches']:
             meta = match['metadata']
-            # 이름과 효능을 가져옴
-            text = f"약초명: {meta.get('name')}\n효능: {meta.get('efficacy')}\n주의사항: {meta.get('caution')}"
-            contexts.append(text)
+            name = meta.get('name', '')
+            efficacy = meta.get('efficacy', '')
+            definition = meta.get('definition', '')
             
-        return "\n\n".join(contexts)
+            # 🚨 거름망: "정보가 부족합니다" 내용이 있으면 과감히 버립니다.
+            if "정보가 부족합니다" in efficacy or "정보가 부족합니다" in definition:
+                continue
+            
+            # 알맹이만 리스트에 담습니다.
+            text = f"- 약초명: {name}\n  효능: {efficacy}\n  주의사항: {meta.get('caution')}"
+            valid_contexts.append(text)
+            
+            # 알맹이가 5개 모이면 그만 찾습니다. (너무 많이 주면 AI가 체함)
+            if len(valid_contexts) >= 5:
+                break
+            
+        # 하나도 못 건졌을 때를 대비
+        if not valid_contexts:
+            return "검색 결과 없음. (관련 약초를 찾지 못했습니다.)"
+            
+        return "\n\n".join(valid_contexts)
+
     except Exception as e:
-        return f"검색 오류: {e}"
+        return ""
 
 def generate_diagnosis(messages, retrieved_info):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GEN_MODEL}:generateContent?key={GOOGLE_API_KEY}"
@@ -150,3 +166,4 @@ if prompt := st.chat_input("증상을 입력하세요 (예: 배가 아프고 설
             db.save_diagnosis(st.session_state.patient_id, prompt, "약초 처방", diagnosis[:200])
 
     st.session_state.messages.append({"role": "assistant", "content": diagnosis})
+
