@@ -35,7 +35,7 @@ GEMINI_EMBED_MODEL = "models/text-embedding-004"
 GEMINI_GEN_MODEL = "gemini-2.0-flash-exp"
 INTERVIEW_TURNS = 4 # 심층 문진 횟수
 
-# --- Helper Functions (기존 고급 로직 유지) ---
+# --- Helper Functions ---
 
 def get_gemini_embedding(text):
     url = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_EMBED_MODEL}:embedContent?key={GOOGLE_API_KEY}"
@@ -93,7 +93,7 @@ def retrieve_context(query, top_k=3):
     except Exception as e:
         return ""
 
-# --- System Prompts (업그레이드: 교통정리 & DB 반영) ---
+# --- System Prompts (에러 수정 완료) ---
 
 PROMPT_QUERY_REFINEMENT_DUAL = """
 당신은 '검색 쿼리 최적화 전문가'입니다.
@@ -112,14 +112,12 @@ Pinecone 검색을 위해 **내복약용**과 **외용약용** 두 가지 쿼리
 설명 없이 오직 **두 줄의 문자열만** 출력하세요.
 """
 
-# ⭐ [핵심 수정] 과거 기록 반영 + 교통정리(Traffic Control) 기능 추가
-# (수정됨) 문진 프롬프트: 체질 기억 & 완치 여부 확인 기능 강화
-# (수정됨) 문진 프롬프트: 에러 수정본 (old_symptom 변수 제거)
+# ✅ [핵심 수정] 에러가 났던 변수 {old_symptom} 제거하고 {history_context}만 남김
 PROMPT_INTERVIEW = """
 당신은 기억력이 좋고 융통성 있는 'AI 한의사'입니다.
 현재 단계는 **[심층 문진(Deep Interview) 단계]**입니다.
 
-[환자의 과거 진료 기록]
+[참고: 환자의 과거 진료 기록]
 {history_context}
 
 [지침 1: 체질 정보 재사용 (중복 질문 금지)]
@@ -128,18 +126,17 @@ PROMPT_INTERVIEW = """
 
 [지침 2: 신규/구 증상 교통정리 (Traffic Control)]
 환자가 오늘 **새로운 증상(New)**을 이야기했을 때:
-1. **완치 여부 확인 (최우선)**: AI가 임의로 판단하지 말고, 반드시 **"그런데 지난번 불편하셨던 증상은 이제 깨끗이 나으셨습니까?"**라고 먼저 물어보세요. (기록된 과거 증상명을 언급하며 물어보세요)
+1. **완치 여부 확인 (최우선)**: AI가 임의로 판단하지 말고, 반드시 **"그런데 지난번 불편하셨던 증상(과거기록 참조)은 이제 깨끗이 나으셨습니까?"**라고 먼저 물어보세요.
 2. **Case A (완치됨)**: 환자가 "나았다"고 하면, 과거 증상은 잊고 **오직 새로운 증상**에만 집중하여 진단하세요. (과거 처방에 구애받지 마세요)
 3. **Case B (안 나음)**: 환자가 "아직 안 나았다"고 하면, 그때 비로소 **"두 가지 다 치료해야겠군요. 하지만 약효 집중을 위해 당장 더 괴로운 것 하나만 먼저 꼽아주시겠어요?"**라고 우선순위를 정하세요.
 
 [문진 진행 순서]
 1. **Turn 1**: 주증상 파악 및 **과거 증상 완치 여부 확인** (필수)
 2. **Turn 2**: 통증의 상세 양상 및 악화 요인
-3. **Turn 3**: (과거 기록에 체질 정보가 **없을 때만**) 전신 상태/체질 파악
+3. **Turn 3~4**: (과거 기록에 체질 정보가 **없을 때만**) 전신 상태/체질 파악
    - *주의*: 체질 정보가 이미 있다면 Turn 3는 생략하고 바로 진단 단계로 넘어가겠다고 말하세요.
 """
 
-# (수정됨) 처방 프롬프트: 체질 기록 저장 강화
 PROMPT_PRESCRIPTION_EXPERT = """
 당신은 명의(名醫) 'AI 한의사'입니다.
 현재 단계는 진단 및 처방 단계입니다.
@@ -150,16 +147,15 @@ PROMPT_PRESCRIPTION_EXPERT = """
 3. 환자 주증상: {chief_complaint}
 
 [지침]
-1. **체질 명시**: 진단 내용에 반드시 환자의 **추정 체질(예: 소음인 경향, 몸이 찬 체질 등)**을 텍스트로 남기세요. (다음 진료 때 기억하기 위함입니다)
+1. **체질 명시**: 진단 내용에 반드시 환자의 **추정 체질(예: 소음인 경향, 몸이 찬 체질 등)**을 텍스트로 포함하세요. (다음 진료 때 기억하기 위함입니다)
 2. **증상 분리**: 만약 환자가 "과거 증상은 다 나았다"고 했다면, 과거 증상용 약재는 빼고 **오직 오늘 증상**에 맞는 약재만 처방하세요.
 3. 답변 포맷 (4단계):
    **1. 🩺 정밀 진단 (체질 분석 포함)**
-      - "환자분의 기록과 증상을 종합할 때 [체질]으로 판단됩니다..."
    **2. 🍵 내복요법 (치료 중심)**
    **3. 🩹 외용요법 (안전 제일)**
    **4. 🧘 생활요법**
 
-4. **주의**: 오직 한국어(Korean)만 사용하세요.
+4. **주의**: 오직 한국어(Korean)만 사용하세요. DB 저장 관련 멘트는 하지 마세요.
 """
 
 # --- Main App ---
@@ -206,7 +202,8 @@ if "messages" not in st.session_state:
     
     if history:
         last = history[-1]
-        st.session_state.history_context = f"- 최근방문: {last['날짜']}\n- 당시증상: {last['증상']}\n- 당시처방: {last['처방약재']}"
+        # history_context 문자열을 여기서 미리 잘 만들어둡니다.
+        st.session_state.history_context = f"- 최근방문: {last['날짜']}\n- 당시증상: {last['증상']}\n- 당시진단: {last['진단결과']}\n- 당시처방: {last['처방약재']}"
         greeting = f"반갑습니다 {p_id}님. 지난번({last['날짜']})엔 **'{last['증상']}'** 문제로 처방을 받으셨네요. 그간 차도는 좀 있으셨습니까? 오늘 불편하신 곳은 어디인지요?"
     else:
         st.session_state.history_context = "과거 진료 기록 없음 (신규 환자)"
@@ -234,7 +231,7 @@ if prompt := st.chat_input("증상을 입력하세요..."):
     if st.session_state.turn_count < INTERVIEW_TURNS:
         with st.chat_message("assistant"):
             with st.spinner("증상을 살피는 중입니다..."):
-                # 프롬프트에 DB 기록(history_context) 주입
+                # ✅ 수정된 부분: 에러 없이 history_context만 전달
                 final_interview_prompt = PROMPT_INTERVIEW.format(history_context=st.session_state.history_context)
                 
                 response_text = generate_gemini_response(
@@ -296,7 +293,7 @@ if prompt := st.chat_input("증상을 입력하세요..."):
                 st.markdown(response_text)
                 
                 # --- [추가 기능 2] 자동 저장 ---
-                # 진단 결과 앞부분만 요약해서 저장 (너무 길면 셀이 터지니까)
+                # 진단 결과 앞부분만 요약해서 저장
                 if db.save_diagnosis(p_id, original_symptom, "AI 정밀 진단", response_text[:300]+"..."):
                     st.success("💾 진료 기록이 안전하게 저장되었습니다.")
                 else:
@@ -305,4 +302,9 @@ if prompt := st.chat_input("증상을 입력하세요..."):
             st.session_state.messages.append({"role": "assistant", "content": response_text})
             st.session_state.diagnosis_complete = True
 
-
+            if st.button("새로운 상담 시작"):
+                # 세션만 초기화 (로그인은 유지)
+                del st.session_state.messages
+                del st.session_state.turn_count
+                del st.session_state.diagnosis_complete
+                st.rerun()
