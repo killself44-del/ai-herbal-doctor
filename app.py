@@ -4,26 +4,23 @@ import requests
 import json
 from pinecone import Pinecone
 from dotenv import load_dotenv
+import db  # 📂 구글 시트 연결 모듈
 
 # 1. 로컬 환경(.env) 로드
 load_dotenv()
 
-# 2. 안전한 키 가져오기 함수 (에러 방지용)
+# 2. 안전한 키 가져오기 함수
 def get_secret(key_name):
-    # 1순위: Streamlit Cloud Secrets 시도
     try:
         if key_name in st.secrets:
             return st.secrets[key_name]
     except Exception:
-        pass  # Secrets가 없어도 에러 내지 말고 넘어가!
-    
-    # 2순위: 로컬 환경변수 시도
+        pass
     return os.getenv(key_name)
 
 GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
 PINECONE_API_KEY = get_secret("PINECONE_API_KEY")
 
-# 3. 키가 없으면 친절하게 알려주기
 if not GOOGLE_API_KEY or not PINECONE_API_KEY:
     st.error("🚨 API 키를 찾을 수 없습니다! Streamlit Cloud의 [Settings] -> [Secrets]에 키가 저장되었는지 확인해주세요.")
     st.stop()
@@ -36,41 +33,24 @@ index = pc.Index(index_name)
 # Constants
 GEMINI_EMBED_MODEL = "models/text-embedding-004"
 GEMINI_GEN_MODEL = "gemini-2.0-flash-exp"
-INTERVIEW_TURNS = 4 # Increased for deeper symptom analysis
+INTERVIEW_TURNS = 4 # 심층 문진 횟수
 
-# --- Helper Functions (REST API) ---
-# --- Helper Functions (REST API) ---
+# --- Helper Functions (기존 고급 로직 유지) ---
 
 def get_gemini_embedding(text):
-    """Get embedding using Gemini REST API."""
     url = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_EMBED_MODEL}:embedContent?key={GOOGLE_API_KEY}"
-    payload = {
-        "model": GEMINI_EMBED_MODEL,
-        "content": {"parts": [{"text": text}]}
-    }
+    payload = {"model": GEMINI_EMBED_MODEL, "content": {"parts": [{"text": text}]}}
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
         return response.json()['embedding']['values']
     except Exception as e:
-        st.error(f"Embedding Error: {e}")
         return None
 
 def generate_gemini_response(messages, system_instruction):
-    """
-    Generate response using Gemini REST API.
-    Args:
-        messages: List of {"role": str, "content": str}
-        system_instruction: String
-    """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GEN_MODEL}:generateContent?key={GOOGLE_API_KEY}"
     
-    # Construct strictly interleaved content: User -> Model -> User ...
-    # System instruction can be passed in 'system_instruction' field for gemini-1.5/2.0
-    
     formatted_contents = []
-    
-    # Add history
     for msg in messages:
         role = "user" if msg["role"] == "user" else "model"
         formatted_contents.append({
@@ -88,17 +68,14 @@ def generate_gemini_response(messages, system_instruction):
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
-        data = response.json()
-        return data['candidates'][0]['content']['parts'][0]['text']
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        return f"Error generating response: {e}\nRaw Response: {response.text if 'response' in locals() else 'None'}"
+        return f"Error: {e}"
 
 def retrieve_context(query, top_k=3):
-    """Retrieve relevant documents from Pinecone."""
     try:
         embedding = get_gemini_embedding(query)
-        if not embedding:
-            return ""
+        if not embedding: return ""
         
         search_results = index.query(
             vector=embedding,
@@ -114,10 +91,9 @@ def retrieve_context(query, top_k=3):
             
         return "\n\n".join(contexts)
     except Exception as e:
-        st.error(f"Search Error: {e}")
         return ""
 
-# --- System Prompts ---
+# --- System Prompts (업그레이드: 교통정리 & DB 반영) ---
 
 PROMPT_QUERY_REFINEMENT_DUAL = """
 당신은 '검색 쿼리 최적화 전문가'입니다.
@@ -125,7 +101,6 @@ Pinecone 검색을 위해 **내복약용**과 **외용약용** 두 가지 쿼리
 
 [규칙]
 1. **Line 1 (내복약)**: 증상 상세(80%) + 체질 보완(20%)
-   - **중요**: 단순히 '두통'이 아니라, '뒷목 통증', '욱신거림', '소화불량 동반' 등 구체적인 양상을 포함하세요.
    - 예: "뒷목 뻣뻣함 긴장성 두통 갈근 (소음인 몸이 참)"
 2. **Line 2 (외용약)**: 증상 완화 + 찜질/아로마 키워드
    - 예: "두통 쿨링 국화 박하 찜질 (진정 효과)"
@@ -137,24 +112,27 @@ Pinecone 검색을 위해 **내복약용**과 **외용약용** 두 가지 쿼리
 설명 없이 오직 **두 줄의 문자열만** 출력하세요.
 """
 
+# ⭐ [핵심 수정] 과거 기록 반영 + 교통정리(Traffic Control) 기능 추가
 PROMPT_INTERVIEW = """
-당신은 매우 꼼꼼한 'AI 한의사'입니다.
+당신은 매우 꼼꼼하고 신중한 'AI 한의사'입니다.
 현재 단계는 **[심층 문진(Deep Interview) 단계]**입니다.
-당신의 목표는 환자의 '주증상'을 현미경 보듯 자세히 파악한 뒤, 보조적으로 체질을 확인하는 것입니다.
 
-[문진 순서 및 지침]
-1. **Turn 1~2 (증상 심층 파악)**:
-   - 주증상의 **위치** (예: 머리 앞/뒤/옆, 배 위/아래)
-   - **통증의 양상** (예: 콕콕 쑤심, 묵직함, 당김, 시림)
-   - **악화/완화 요인** (예: 찬 바람 맞으면 심해짐, 밤에 심해짐, 스트레스)
-   - *주의*: 체질(추위, 소화)은 아직 묻지 마세요. 증상부터 파십시오.
+[참고: 환자의 과거 진료 기록]
+{history_context}
 
-2. **Turn 3~4 (전신 상태 및 체질)**:
-   - 증상이 파악된 후, 소화/대변/추위탐/수면 등을 물어 체질을 추론하세요.
+[지침]
+1. **기존 증상 확인**: 환자가 "아직 아파요"라고 하면 과거 처방이 효과가 없었음을 인지하고 원인을 재분석하세요.
+2. **새로운 증상 확인**: 환자가 "다른 곳이 아파요"라고 하면 새로운 문진을 시작하세요.
 
-3. **공통 지침**:
-   - 한 번에 1~2개의 질문만 하세요.
-   - "아까 뒷목이 당긴다고 하셨는데..." 처럼 환자의 말을 인용하여 공감대(Rapport)를 형성하세요.
+⭐ **[중요: 복합 증상 대처 (Traffic Control)]**
+만약 환자가 **"기존 병도 안 나았고, 새로운 병도 생겼다"**고 동시에 호소하면:
+- 무리하게 두 가지를 한꺼번에 처방하려 하지 마세요.
+- **"저런, 엎친 데 덮친 격이군요. 두 가지를 다 고려하겠지만, 지금 당장 더 견디기 힘들거나 시급한 증상 하나를 먼저 말씀해 주시겠어요? 그래야 더 정확하고 강력한 처방이 가능합니다."**라고 말하며 **우선순위**를 정하게 유도하세요.
+
+[문진 순서]
+1. **Turn 1**: 주증상(가장 불편한 것) 확정 및 통증 양상 파악
+2. **Turn 2**: 악화/완화 요인 및 발병 시기
+3. **Turn 3~4**: 전신 상태(소화, 대변, 추위탐, 수면) 파악하여 체질 추론
 """
 
 PROMPT_PRESCRIPTION_EXPERT = """
@@ -170,147 +148,158 @@ PROMPT_PRESCRIPTION_EXPERT = """
 1. **검증 단계(Self-Reflection)**:
    - **내복약**: 주증상에 효과가 있고 체질에 맞는 약초 선택.
    - **🔴 절대 금기**: 
-     - **식품성 약재(쌀, 대추, 감초, 생강 등)** 만으로 구성된 처방을 내리지 마세요. 반드시 **치료 효능이 강한 약초(천궁, 당귀, 갈근 등)**를 메인으로 포함해야 합니다.
-     - 주증상과 관련 없는 약초(단지 체질만 맞는 경우)는 제외하세요.
-   - **외용약**: 주증상 완화에 도움이 되는 약초 선택. (자극성 약재 얼굴 도포 금지)
+     - 식품성 약재(쌀, 대추 등)만으로 처방 금지. 치료 효능이 강한 약초 포함 필수.
+   - **외용약**: 주증상 완화에 도움이 되는 약초 선택.
 
 2. 답변 포맷 (4단계):
-
    **1. 🩺 정밀 진단과 병리 분석**
-   - "환자분은 [체질]에 가까우나, 현재 호소하시는 통증은 [구체적 양상]에 해당합니다. 이는 [한의학적 원인 추론]으로 보입니다."
-   
    **2. 🍵 내복요법 (치료 중심)**
-   - 선택된 약초 2~3가지를 소개하세요.
-   - **처방 근거**: "이 약초를 선택한 이유는 [증상]을 [어떻게] 치료하기 때문입니다"라고 전문가스럽게 설명하세요. (단순 나열 금지)
-   - 탕약/차 레시피 제안.
-
    **3. 🩹 외용요법 (안전 제일)**
-   - [External Context] 활용. 안전한 찜질/도포법 제안.
-
    **4. 🧘 생활요법**
-   - 증상 완화를 위한 구체적 행동.
 
-3. **안전 경고**: "이 정보는 참고용이며, 정확한 진단은 한의원에서 받으세요"라고 덧붙이세요.
-4. **주의**: **오직 한국어(Korean)만 사용하세요.**
+3. **안전 경고**: "이 정보는 참고용입니다" 문구 포함.
+4. **주의**: 오직 한국어(Korean)만 사용하세요. DB 저장 관련 멘트는 하지 마세요.
 """
 
 # --- Main App ---
 
-# Page Config
 st.set_page_config(page_title="심층 약초 상담소", page_icon="🌿", layout="centered")
 
 # Custom CSS
 st.markdown("""
 <style>
     .stApp { background-color: #f6f7f2; color: #2e3b28; }
-    h1 { color: #4a5d23; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; text-align: center; margin-bottom: 2rem; }
+    h1 { color: #4a5d23; font-family: 'Malgun Gothic', sans-serif; text-align: center; margin-bottom: 2rem; }
     .stChatMessage { border-radius: 12px; padding: 1rem; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-    div[data-testid="stChatMessageContent"] { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; }
     .stButton>button { background-color: #6b8c42 !important; color: white !important; border-radius: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🌿 심층 약초 상담소")
-st.warning("⚠️ 본 정보는 참고용이며, 의학적 진단을 대신할 수 없습니다.")
 
-# Session State Initialization
+# --- [추가 기능 1] 로그인 시스템 ---
+if "patient_id" not in st.session_state:
+    st.session_state.patient_id = None
+
+if not st.session_state.patient_id:
+    with st.form("login_form"):
+        st.subheader("📋 진료 접수")
+        p_id = st.text_input("성함이나 전화번호 뒷자리를 입력하세요", placeholder="예: 홍길동1234")
+        if st.form_submit_button("상담 시작"):
+            if p_id:
+                st.session_state.patient_id = p_id
+                st.rerun()
+    st.warning("⚠️ 본 정보는 참고용이며, 의학적 진단을 대신할 수 없습니다.")
+    st.stop()
+
+# 로그인 성공 후 로직
+p_id = st.session_state.patient_id
+st.sidebar.success(f"환자: {p_id}님 접속 중")
+
+# 초기화 및 DB 기록 불러오기
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Initial Greeting
-    greeting = "반갑습니다. AI 한의사입니다. \n\n오늘 어떤 불편함 때문에 찾아오셨는지요? 증상을 자세히 말씀해 주시면, 제 꼼꼼하게 살펴드리겠습니다."
-    st.session_state.messages.append({"role": "assistant", "content": greeting})
     
+    # DB 조회
+    history = db.get_patient_history(p_id)
+    
+    if history:
+        last = history[-1]
+        st.session_state.history_context = f"- 최근방문: {last['날짜']}\n- 당시증상: {last['증상']}\n- 당시처방: {last['처방약재']}"
+        greeting = f"반갑습니다 {p_id}님. 지난번({last['날짜']})엔 **'{last['증상']}'** 문제로 처방을 받으셨네요. 그간 차도는 좀 있으셨습니까? 오늘 불편하신 곳은 어디인지요?"
+    else:
+        st.session_state.history_context = "과거 진료 기록 없음 (신규 환자)"
+        greeting = f"반갑습니다 {p_id}님, AI 한의사입니다.\n\n오늘 어떤 불편함 때문에 찾아오셨는지요? 증상을 자세히 말씀해 주시면 꼼꼼하게 살펴드리겠습니다."
+    
+    st.session_state.messages.append({"role": "assistant", "content": greeting})
+
 if "turn_count" not in st.session_state:
     st.session_state.turn_count = 0
+if "diagnosis_complete" not in st.session_state:
+    st.session_state.diagnosis_complete = False
 
-if "diagnosis_mode" not in st.session_state:
-    st.session_state.diagnosis_mode = False
-
-# Display Chat History
+# 대화 기록 표시
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# User Input
+# 사용자 입력 처리
 if prompt := st.chat_input("증상을 입력하세요..."):
-    # 1. Add User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # 2. Logic Branching
-    
-    # Branch A: Interview Mode (Turns 0 ~ INTERVIEW_TURNS-1)
+    # [Branch A] 심층 문진 모드 (Turn 1~4)
     if st.session_state.turn_count < INTERVIEW_TURNS:
         with st.chat_message("assistant"):
             with st.spinner("증상을 살피는 중입니다..."):
+                # 프롬프트에 DB 기록(history_context) 주입
+                final_interview_prompt = PROMPT_INTERVIEW.format(history_context=st.session_state.history_context)
+                
                 response_text = generate_gemini_response(
                     st.session_state.messages, 
-                    PROMPT_INTERVIEW
+                    final_interview_prompt
                 )
                 st.markdown(response_text)
         
         st.session_state.messages.append({"role": "assistant", "content": response_text})
         st.session_state.turn_count += 1
         
-        # Check if next turn should be diagnosis
         if st.session_state.turn_count >= INTERVIEW_TURNS:
              st.info("💡 충분한 정보가 모였습니다. 다음 단계에서 정밀 진단을 시작합니다.")
 
-    # Branch B: Diagnosis Mode (Turn >= INTERVIEW_TURNS)
+    # [Branch B] 정밀 진단 모드 (Turn >= 4)
     else:
-        with st.chat_message("assistant"):
-            status_text = st.empty()
-            status_text.text("🔍 정밀 분석 중: 내복약과 외용약을 분리하여 검색합니다...")
-            
-            # 1. Refine Search Query (Dual)
-            transcript = "\\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-            
-            refine_prompt = PROMPT_QUERY_REFINEMENT_DUAL.format(history=transcript)
-            
-            raw_queries = generate_gemini_response([{"role": "user", "content": refine_prompt}], "")
-            
-            # Parse Queries
-            try:
-                # Naive splitting by newline
-                lines = [line.strip() for line in raw_queries.strip().split('\n') if line.strip()]
-                query_internal = lines[0] if len(lines) > 0 else "건강 상담"
-                query_external = lines[1] if len(lines) > 1 else query_internal
-            except:
-                query_internal = "건강 상담"
-                query_external = "건강 상담"
-
-            status_text.text(f"🔍 검색어 생성:\n1. 내복: {query_internal}\n2. 외용: {query_external}")
-            
-            # 2. Retrieve (Dual RAG)
-            context_internal = retrieve_context(query_internal, top_k=3)
-            context_external = retrieve_context(query_external, top_k=3)
-            
-            status_text.text("💊 안전성 검증 및 처방 작성 중...")
-            
-            # 3. Generate Prescription
-            if len(st.session_state.messages) > 1:
-                original_symptom = st.session_state.messages[1]['content']
-            else:
-                original_symptom = "알 수 없음"
-
-            final_system_prompt = PROMPT_PRESCRIPTION_EXPERT.format(
-                context_internal=context_internal, 
-                context_external=context_external,
-                chief_complaint=original_symptom
-            )
-            
-            response_text = generate_gemini_response(
-                st.session_state.messages, 
-                final_system_prompt
-            )
-            
-            status_text.empty()
-            st.markdown(response_text)
+        if not st.session_state.diagnosis_complete:
+            with st.chat_message("assistant"):
+                status_text = st.status("🔍 정밀 분석 중: 내복약과 외용약을 분리하여 검색합니다...", expanded=True)
                 
-        st.session_state.messages.append({"role": "assistant", "content": response_text})
-        
-        # Reset capability?
-        # st.button("새로운 상담 시작", on_click=lambda: st.session_state.clear())
+                # 1. 쿼리 최적화 (Dual Query)
+                transcript = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+                refine_prompt = PROMPT_QUERY_REFINEMENT_DUAL.format(history=transcript)
+                raw_queries = generate_gemini_response([{"role": "user", "content": refine_prompt}], "")
+                
+                try:
+                    lines = [line.strip() for line in raw_queries.strip().split('\n') if line.strip()]
+                    query_internal = lines[0] if len(lines) > 0 else "건강 상담"
+                    query_external = lines[1] if len(lines) > 1 else query_internal
+                except:
+                    query_internal = "건강 상담"; query_external = "건강 상담"
 
+                status_text.write(f"🔍 검색어 생성:\n1. 내복: {query_internal}\n2. 외용: {query_external}")
+                
+                # 2. Retrieve (Dual RAG)
+                context_internal = retrieve_context(query_internal, top_k=3)
+                context_external = retrieve_context(query_external, top_k=3)
+                status_text.write("💊 안전성 검증 및 처방 작성 중...")
+                
+                # 3. Generate Prescription
+                if len(st.session_state.messages) > 1:
+                    # 보통 두 번째 메시지가 주증상
+                    original_symptom = st.session_state.messages[1]['content']
+                else:
+                    original_symptom = "알 수 없음"
 
+                final_system_prompt = PROMPT_PRESCRIPTION_EXPERT.format(
+                    context_internal=context_internal, 
+                    context_external=context_external,
+                    chief_complaint=original_symptom
+                )
+                
+                response_text = generate_gemini_response(
+                    st.session_state.messages, 
+                    final_system_prompt
+                )
+                
+                status_text.empty()
+                st.markdown(response_text)
+                
+                # --- [추가 기능 2] 자동 저장 ---
+                # 진단 결과 앞부분만 요약해서 저장 (너무 길면 셀이 터지니까)
+                if db.save_diagnosis(p_id, original_symptom, "AI 정밀 진단", response_text[:300]+"..."):
+                    st.success("💾 진료 기록이 안전하게 저장되었습니다.")
+                else:
+                    st.error("⚠️ 저장 실패 (관리자에게 문의하세요)")
+                
+            st.session_state.messages.append({"role": "assistant", "content": response_text})
+            st.session_state.diagnosis_complete = True
