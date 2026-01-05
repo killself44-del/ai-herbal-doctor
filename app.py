@@ -87,24 +87,35 @@ def simple_search(query_text):
         return ""
 
 # --- 기능 3: 맞춤 처방 (체질 + 검색결과) ---
+# --- 기능 3: 맞춤 처방 (엄격 모드 적용) ---
 def generate_prescription(symptom, constitution, herb_list):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GEN_MODEL}:generateContent?key={GOOGLE_API_KEY}"
     
+    # 🌟 프롬프트 대폭 수정: 억지 추천 금지 명령 추가 🌟
     system_prompt = f"""
-    당신은 통합 의학 전문가입니다.
-    환자의 **체질({constitution})**을 고려하여, 아래 검색된 약초들 중 가장 적합한 것을 처방하세요.
+    당신은 20년 경력의 엄격하고 정직한 '통합 의학 전문가'입니다.
+    검색된 약초 목록을 검토하여 환자의 **체질({constitution})**과 **증상({symptom})**에 **'직접적으로'** 효과가 있는 것만 처방하세요.
     
     [환자 정보]
     - 체질: {constitution}
-    - 증상: {symptom}
+    - 호소 증상: {symptom}
     
-    [검색된 약초 목록]
+    [검색된 데이터베이스 후보군]
     {herb_list}
     
-    [지침]
-    1. 이 체질에 가장 잘 맞는 약초를 1순위로 추천하세요.
-    2. 체질에 맞지 않는 약초는 경고하거나 제외하세요.
-    3. 한방, 아유르베다, 약국약을 골고루 고려하세요.
+    [🚨 절대 준수 사항 (매우 중요)]
+    1. **연관성 검증:** 후보군에 있는 약이 '두통'이나 해당 증상에 명확한 효능이 없다면 **절대 추천하지 마세요.**
+       - 예: 파슬리, 아시클로버, 연고 등은 두통약이 아니므로 제외할 것.
+    2. **솔직함:** 만약 검색된 목록에 적합한 약이 단 하나도 없다면, 억지로 추천하지 말고 **"죄송합니다. 현재 데이터베이스에 해당 증상을 치료할 적합한 약초/약품 정보가 부족합니다."**라고 말하세요.
+    3. **우선순위:**
+       - 1순위: 증상 완화에 탁월한 **약국약(Pharmacy)** 또는 **전문 한약재**.
+       - 2순위: 체질에 맞는 **아유르베다 허브**.
+       - 제외: 단순 식품(반찬거리)이나 엉뚱한 약.
+       
+    [답변 양식]
+    - **추천 처방:** (약 이름)
+    - **이유:** (체질과 증상을 연결해 설명)
+    - **복용법:** (간단히)
     """
     
     payload = {
@@ -115,8 +126,8 @@ def generate_prescription(symptom, constitution, herb_list):
         res = requests.post(url, json=payload).json()
         return res['candidates'][0]['content']['parts'][0]['text']
     except:
-        return "처방 생성 실패"
-
+        return "처방 생성 중 오류가 발생했습니다."
+        
 # --- 메인 앱 UI ---
 st.set_page_config(page_title="체질 맞춤 약초원", page_icon="🌿")
 st.title("🌿 AI 체질 맞춤 처방소")
@@ -201,3 +212,4 @@ if prompt := st.chat_input("증상을 입력하세요..."):
             
             # DB 저장
             db.save_diagnosis(st.session_state.user_id, prompt, "AI 처방", diagnosis[:100])
+
