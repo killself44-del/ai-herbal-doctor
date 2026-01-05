@@ -1,38 +1,63 @@
 import streamlit as st
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from google.oauth2.service_account import Credentials
+import datetime
 
-# 1. 구글 시트 연결
-def get_connection():
-    # Secrets에서 키 정보 가져오기 (이름 주의: gcp_service_account)
-    credentials_dict = st.secrets["gcp_service_account"]
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-    client = gspread.authorize(creds)
-    # ⚠️ 중요: 구글 시트 파일 이름을 정확히 적으세요!
-    sheet = client.open("AI한의사_진료기록부").sheet1
-    return sheet
-
-# 2. 진료 기록 저장 (쓰기)
-def save_diagnosis(patient_id, symptoms, diagnosis, prescription):
+# 1. 인증 설정
+def get_client():
+    # secrets.toml 또는 로컬 json 파일 사용
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    
+    # 로컬용 (google_key.json 파일이 있다고 가정)
     try:
-        sheet = get_connection()
-        date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sheet.append_row([date, patient_id, symptoms, diagnosis, prescription])
+        creds = Credentials.from_service_account_file("google_key.json", scopes=scope)
+    except:
+        # Streamlit Cloud용 (Secrets에 google_key가 있는 경우)
+        creds = Credentials.from_service_account_info(st.secrets["google_key"], scopes=scope)
+        
+    return gspread.authorize(creds)
+
+# 2. 환자 체질 조회 (users 시트)
+def get_user_constitution(user_id):
+    try:
+        client = get_client()
+        sheet = client.open("약초_데이터베이스").worksheet("users") # 시트 이름 확인!
+        
+        # ID로 검색
+        cell = sheet.find(user_id)
+        if cell:
+            # ID 옆 칸(체질)을 가져옴
+            return sheet.cell(cell.row, cell.col + 1).value
+        return None # 없으면 None 반환
+    except Exception as e:
+        return None
+
+# 3. 신규 환자 등록 (users 시트)
+def register_user(user_id, constitution):
+    try:
+        client = get_client()
+        sheet = client.open("약초_데이터베이스").worksheet("users")
+        
+        # [ID, 체질, 가입일] 추가
+        sheet.append_row([user_id, constitution, str(datetime.datetime.now())])
         return True
     except Exception as e:
-        # 에러 나면 화면에 보여줌 (디버깅용)
-        st.error(f"DB 저장 실패: {e}")
+        print(f"등록 에러: {e}")
         return False
 
-# 3. 과거 기록 조회 (읽기)
-def get_patient_history(patient_id):
+# 4. 진료 기록 저장 (records 시트)
+def save_diagnosis(user_id, symptom, diagnosis, prescription):
     try:
-        sheet = get_connection()
-        all_records = sheet.get_all_records()
-        # 내 ID와 같은 기록만 찾아서 리스트로 만듦
-        history = [row for row in all_records if str(row['환자ID']) == str(patient_id)]
-        return history
-    except:
-        return []
+        client = get_client()
+        sheet = client.open("약초_데이터베이스").worksheet("records")
+        
+        # [날짜, ID, 증상, 진단내용, 처방약재]
+        sheet.append_row([
+            str(datetime.datetime.now()), 
+            user_id, 
+            symptom, 
+            diagnosis, 
+            prescription
+        ])
+    except Exception as e:
+        print(f"저장 에러: {e}")
