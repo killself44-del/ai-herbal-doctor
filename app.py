@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import time  # 👈 이 친구가 빠져서 에러가 났습니다. 추가 완료!
 import requests
 from pinecone import Pinecone
 from dotenv import load_dotenv
@@ -18,7 +19,7 @@ GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
 PINECONE_API_KEY = get_secret("PINECONE_API_KEY")
 
 if not GOOGLE_API_KEY or not PINECONE_API_KEY:
-    st.error("🚨 API 키 에러")
+    st.error("🚨 API 키 에러: .env 파일이나 Secrets를 확인하세요.")
     st.stop()
 
 # Pinecone & Model 설정
@@ -140,7 +141,7 @@ if "constitution" not in st.session_state:
         st.session_state.constitution = saved_const
         st.toast(f"환영합니다! {saved_const} 체질의 {st.session_state.user_id}님", icon="✅")
     else:
-        # 🌟 여기가 바뀐 부분: 퀴즈 형식 🌟
+        # 🌟 체질 진단 퀴즈 🌟
         st.info(f"반갑습니다 {st.session_state.user_id}님! 정확한 처방을 위해 체질 진단을 먼저 진행합니다.")
         
         with st.form("quiz_form"):
@@ -169,8 +170,11 @@ if "constitution" not in st.session_state:
                     # 결과 저장 및 이동
                     db.register_user(st.session_state.user_id, result)
                     st.session_state.constitution = result
+                    
                     st.success(f"분석 완료! 회원님은 **'{result}'** 성향이 강합니다.")
-                    time.sleep(2)
+                    
+                    # 2초 대기 후 이동 (여기서 에러가 났었습니다)
+                    time.sleep(2) 
                     st.rerun()
         st.stop()
 
