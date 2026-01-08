@@ -9,15 +9,15 @@ scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 try:
     # Streamlit Secrets에서 [gcp_service_account] 섹션을 읽어옵니다.
     creds_info = st.secrets["gcp_service_account"]
-    # 파일명 대신 'dict'를 사용하여 메모리상의 정보를 바로 인증에 사용합니다.
+    # dict 형식을 바로 사용하여 파일 없이 인증합니다.
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
     client = gspread.authorize(creds)
     
-    # 구글 시트 열기 (시트 이름이 정확한지 확인하세요)
+    # 구글 시트 열기 (시트 이름 확인 필수)
     spreadsheet_name = "AI_Pharmacy_DB" 
     sheet = client.open(spreadsheet_name)
 except Exception as e:
-    st.error(f"⚠️ 구글 시트 연결 오류: {e}")
+    st.error(f"⚠️ 구글 시트 인증 오류: {e}. Secrets 설정을 확인하세요.")
 
 # 2. 사용자의 체질 정보 가져오기
 def get_user_constitution(user_id):
@@ -34,6 +34,7 @@ def get_user_constitution(user_id):
 def save_user_constitution(user_id, constitution):
     try:
         user_sheet = sheet.worksheet("users")
+        # 중복 저장 방지
         if not user_sheet.find(user_id):
             user_sheet.append_row([user_id, constitution])
             return True
