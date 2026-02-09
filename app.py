@@ -15,7 +15,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index("herb-knowledge")
 GEMINI_GEN_MODEL = "gemini-2.0-flash-exp"
-GEMINI_EMBED_MODEL = "models/text-embedding-004"
+GEMINI_EMBED_MODEL = "models/text-embedding-001"
 
 # --- 핵심 로직 함수 ---
 
@@ -28,7 +28,7 @@ def simple_search(query_text):
             search_query = f"Ayurveda 인도 아유르베다 핵심 허브 처방: {query_text}"
 
         url = f"https://generativelanguage.googleapis.com/v1beta/{GEMINI_EMBED_MODEL}:embedContent?key={GOOGLE_API_KEY}"
-        payload = {"model": GEMINI_EMBED_MODEL, "content": {"parts": [{"text": search_query}]}, "taskType": "RETRIEVAL_QUERY"}
+        payload = {"model": GEMINI_EMBED_MODEL, "content": {"parts": [{"text": search_query}]}, "taskType": "RETRIEVAL_QUERY", "outputDimensionality": 768}
         res = requests.post(url, json=payload).json()
         vector = res['embedding']['values']
         
@@ -141,3 +141,4 @@ if prompt := st.chat_input("증상을 상세히 알려주세요"):
             st.markdown(ans)
             db.save_diagnosis(st.session_state.user_id, prompt, "통합 진료", ans[:100])
             st.session_state.messages.append({"role": "assistant", "content": ans})
+
