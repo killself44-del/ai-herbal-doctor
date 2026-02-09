@@ -14,7 +14,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 # Pinecone 설정
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index("herb-knowledge")
-GEMINI_GEN_MODEL = "gemini-2.0-flash-exp"
+GEMINI_GEN_MODEL = "gemini-2.0-flash"
 GEMINI_EMBED_MODEL = "models/text-embedding-001"
 
 # --- 핵심 로직 함수 ---
@@ -141,4 +141,5 @@ if prompt := st.chat_input("증상을 상세히 알려주세요"):
             st.markdown(ans)
             db.save_diagnosis(st.session_state.user_id, prompt, "통합 진료", ans[:100])
             st.session_state.messages.append({"role": "assistant", "content": ans})
+
 
